@@ -16,10 +16,17 @@ class MalLinkCog:
         self.DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
         self.DISCORD_MOD_ROLE_ID = os.environ.get('DISCORD_MOD_ROLE_ID')
         
-        # The regular expression to detect links with spaces around the dot.
+        # Get the list of regulars from environment variables, split by comma, and convert to a lowercase set for fast lookups
+        regulars_str = os.environ.get('REGULAR_USERS', '')
+        self.regulars = {name.strip().lower() for name in regulars_str.split(',') if name.strip()}
+        
+        # Regex to find any potential link with spaces around the dot
         self.LINK_REGEX = re.compile(
             r"(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\s*\.\s*)+[a-zA-Z]{2,9}(?![a-zA-Z0-9])(?:\/\S*)?"
         )
+        
+        # Regex to specifically find twitch.tv or clips.twitch.tv links, even with spaces
+        self.TWITCH_LINK_REGEX = re.compile(r'(\bclips\s*\.\s*)?twitch\s*\.\s*tv\b', re.IGNORECASE)
         
         # To be populated by the setup method
         self.broadcaster_id = None
@@ -68,25 +75,32 @@ class MalLinkCog:
 
     async def on_message(self, msg: ChatMessage):
         """This function is called by the Chat instance for each new message."""
+        # The bot should not react to its own messages
         if msg.user.name.lower() == self.bot_login_name:
             return
 
-        if self.LINK_REGEX.search(msg.text):
-            print(f"Link detected from {msg.user.name}. Taking action...")
+        # 1. Check for permissions. If user is exempt, do nothing.
+        # User is exempt if they are a mod, a VIP, or in the regulars list.
+        if msg.user.is_mod or 'vip' in (msg.user.badges or {}) or msg.user.name.lower() in self.regulars:
+            return
+
+        # 2. Check if the message contains a link, but not a twitch.tv link.
+        if self.LINK_REGEX.search(msg.text) and not self.TWITCH_LINK_REGEX.search(msg.text):
+            print(f"Non-Twitch link detected from {msg.user.name}. Taking action...")
             try:
-                # 1. Delete the offending message
+                # Delete the offending message
                 await self.chat.send_message(self.target_channel, f'/delete {msg.id}')
 
-                # 2. Timeout the user
+                # Timeout the user
                 await self.twitch.ban_user(
                     broadcaster_id=self.broadcaster_id,
                     moderator_id=self.moderator_id,
                     user_id=msg.user.id,
                     duration=600,
-                    reason="Posting suspicious links."
+                    reason="Posting non-Twitch links."
                 )
 
-                # 3. Alert moderators in Discord
+                # Alert moderators in Discord
                 await self.send_discord_webhook(msg.user.name, msg.text)
 
             except Exception as e:
