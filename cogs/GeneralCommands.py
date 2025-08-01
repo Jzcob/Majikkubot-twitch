@@ -42,6 +42,9 @@ class CommandsCog:
         command = parts[0]
 
         # --- Define your commands here ---
+        if command == '!hello':
+            await self.chat.send_message(self.target_channel, f'Hello, {msg.user.name}!')
+        
         if command == '!discord':
             discord_message = "Jzcoob's Discord Server is: https://discord.gg/WGQYdzvn8y"
             # First, send the message to chat
