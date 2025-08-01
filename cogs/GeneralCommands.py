@@ -46,11 +46,12 @@ class CommandsCog:
             await self.chat.send_message(self.target_channel, f'Hello, {msg.user.name}!')
         
         if command == '!discord':
-            discord_message = "Jzcoob's Discord Server is: https://discord.gg/WGQYdzvn8y"
+            discord_message = "Jacob's Discord Server is: https://discord.gg/WGQYdzvn8y"
             # First, send the message to chat
             await self.chat.send_message(self.target_channel, discord_message)
             # Then, pin it as an announcement (only mods can do this)
-            if msg.user.is_mod:
+            user_badges = msg.user.badges or {}
+            if 'moderator' in user_badges:
                 try:
                     await self.twitch.manage_chat_announcements(
                         broadcaster_id=self.broadcaster_id,
@@ -60,8 +61,15 @@ class CommandsCog:
                     print(f"Pinned Discord link message.")
                 except Exception as e:
                     print(f"Failed to pin message: {e}")
-            
         
+        if command == '!lurk':
+            lurk_message = f"{msg.user.name} is now lurking! 👀"
+            await self.chat.send_message(self.target_channel, lurk_message)
+
+        if command == '!youtube':
+            youtube_message = "Jacob's YouTube Channel is: https://www.youtube.com/channel/UCd4ZnLx6r7XNTNdNLHUutRw"
+            await self.chat.send_message(self.target_channel, youtube_message)
+
         # Example of another command
         # if command == '!uptime':
         #     # (Add logic to get stream uptime here)

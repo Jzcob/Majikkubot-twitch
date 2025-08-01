@@ -1,2 +1,5 @@
 .env
 my_token.json
+*.pyc
+*.pyc
+cogs/__pycache__/MalLink.cpython-313.pyc

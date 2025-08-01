@@ -31,10 +31,17 @@ TOKEN_FILE = 'my_token.json'
 
 # Define the necessary scopes for your bot.
 USER_SCOPES = [
+    # Chat
     AuthScope.CHAT_READ,
     AuthScope.CHAT_EDIT,
+    # Moderation
     AuthScope.MODERATOR_MANAGE_BANNED_USERS,
-    AuthScope.MODERATOR_MANAGE_ANNOUNCEMENTS
+    AuthScope.MODERATOR_MANAGE_ANNOUNCEMENTS,
+    AuthScope.MODERATOR_MANAGE_CHAT_SETTINGS,
+    AuthScope.MODERATOR_READ_CHATTERS,
+    # Channel Interaction
+    AuthScope.CHANNEL_MANAGE_POLLS,
+    AuthScope.CHANNEL_MANAGE_PREDICTIONS
 ]
 
 

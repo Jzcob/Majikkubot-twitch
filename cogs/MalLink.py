@@ -13,7 +13,8 @@ class MalLinkCog:
         self.event_name = ChatEvent.MESSAGE # The event this cog listens to
 
         # --- Cog-specific Configuration ---
-        self.DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
+        self.DISCORD_WEBHOOK_MOD = os.environ.get('DISCORD_WEBHOOK_MOD')
+        self.DISCORD_WEBHOOK_LOG = os.environ.get('DISCORD_WEBHOOK_LOG')
         self.DISCORD_MOD_ROLE_ID = os.environ.get('DISCORD_MOD_ROLE_ID')
         
         # Get the list of regulars from environment variables, split by comma, and convert to a lowercase set for fast lookups
@@ -58,20 +59,24 @@ class MalLinkCog:
 
     async def send_discord_webhook(self, user_name: str, original_message: str):
         """Sends a timeout alert to a Discord channel via webhook."""
-        if not self.DISCORD_WEBHOOK_URL:
-            print("Warning: DISCORD_WEBHOOK_URL is not set. Cannot send alert.")
+        if not self.DISCORD_WEBHOOK_MOD:
+            print("Warning: DISCORD_WEBHOOK_MOD is not set. Cannot send alert.")
             return
         
         async with aiohttp.ClientSession() as session:
-            webhook = discord.Webhook.from_url(self.DISCORD_WEBHOOK_URL, session=session)
+            webhook = discord.Webhook.from_url(self.DISCORD_WEBHOOK_MOD, session=session)
+            log = discord.Webhook.from_url(self.DISCORD_WEBHOOK_LOG, session=session)
             mod_mention = f"<@&{self.DISCORD_MOD_ROLE_ID}>" if self.DISCORD_MOD_ROLE_ID else "@moderators"
+
             
             embed = discord.Embed(title="User Timed Out for Posting Link", color=discord.Color.red())
             embed.add_field(name="Username", value=user_name, inline=False)
             embed.add_field(name="Original Message", value=f"```{original_message}```", inline=False)
+            await log.send(embed=embed)
             embed.set_footer(text="Please review user's chat history for a potential ban.")
             
             await webhook.send(content=mod_mention, embed=embed)
+            
 
     async def on_message(self, msg: ChatMessage):
         """This function is called by the Chat instance for each new message."""
@@ -80,8 +85,10 @@ class MalLinkCog:
             return
 
         # 1. Check for permissions. If user is exempt, do nothing.
-        # User is exempt if they are a mod, a VIP, or in the regulars list.
-        if msg.user.is_mod or 'vip' in (msg.user.badges or {}) or msg.user.name.lower() in self.regulars:
+        # User is exempt if they have a moderator or vip badge, or are in the regulars list.
+        # The (msg.user.badges or {}) part handles cases where a user has no badges.
+        user_badges = msg.user.badges or {}
+        if 'moderator' in user_badges or 'vip' in user_badges or msg.user.name.lower() in self.regulars:
             return
 
         # 2. Check if the message contains a link, but not a twitch.tv link.
