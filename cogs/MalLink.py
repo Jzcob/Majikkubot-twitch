@@ -19,7 +19,7 @@ class MalLinkCog:
         
         # Regex to find any potential link with spaces around the dot
         self.LINK_REGEX = re.compile(
-            r"(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\s*\.\s*)+[a-zA-Z]{2,9}(?![a-zA-Z0-9])(?:\/\S*)?"
+            r"$(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,9}(?![a-zA-Z0-9])(?:\/\S*)?$"
         )
         
         # Regex to specifically find twitch.tv or clips.twitch.tv links, even with spaces
