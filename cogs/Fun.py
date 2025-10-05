@@ -71,6 +71,18 @@ class FunCog:
             # Pick a random response and send it to the correct channel
             response = random.choice(EIGHT_BALL_RESPONSES)
             await self.chat.send_message(channel_name, f"@{msg.user.name}, {response}")
+        
+        elif command == '!bald':
+            bald_message = f"{msg.user.name} is BALD! 🦲✨"
+            await self.chat.send_message(channel_name, bald_message)
+        
+        elif command.startswith('!diddy'):
+            target_user = command[len('!diddy'):].strip()
+            if target_user:
+                diddy_message = f"{target_user} is a diddy! 🎉"
+                await self.chat.send_message(channel_name, diddy_message)
+            else:
+                await self.chat.send_message(channel_name, "Please specify a user.")
 
 
 # The main setup function signature is updated to match the main script

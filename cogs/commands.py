@@ -97,7 +97,7 @@ class CommandsCog:
             if youtube_link:
                 youtube_message = f"Check out the YouTube channel! {youtube_link}"
                 await self.chat.send_message(channel_name, youtube_message)
-
+        
 
 # This setup function is called by your main script
 async def setup(twitch: Twitch, chat: Chat, channel_configs: List[Dict]):
