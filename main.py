@@ -8,40 +8,27 @@ from twitchAPI.type import AuthScope
 from twitchAPI.chat import Chat
 
 # --- Configuration ---
-# It's recommended to use environment variables for your credentials.
-# Create a .env file in the same directory with these lines:
-# CLIENT_ID="your_client_id"
-# CLIENT_SECRET="your_client_secret"
-# TARGET_CHANNEL="your_twitch_channel_name"
-# DISCORD_WEBHOOK_URL="your_discord_webhook_url"
-# DISCORD_MOD_ROLE_ID="your_moderator_role_id"
+# Your Client ID and Secret should be in a .env file
+# Channel-specific settings are now in config.json
 
-# Load environment variables
+# Load environment variables for credentials
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    print("dotenv library not found, please install with 'pip install python-dotenv'")
-    print("Continuing without it, make sure environment variables are set manually.")
+    print("dotenv library not found, continuing without it.")
 
 APP_ID = os.environ.get('CLIENT_ID')
 APP_SECRET = os.environ.get('CLIENT_SECRET')
-TARGET_CHANNEL = os.environ.get('TARGET_CHANNEL')
 TOKEN_FILE = 'my_token.json'
+CONFIG_FILE = 'config.json'
 
 # Define the necessary scopes for your bot.
 USER_SCOPES = [
-    # Chat
     AuthScope.CHAT_READ,
     AuthScope.CHAT_EDIT,
-    # Moderation
     AuthScope.MODERATOR_MANAGE_BANNED_USERS,
-    AuthScope.MODERATOR_MANAGE_ANNOUNCEMENTS,
-    AuthScope.MODERATOR_MANAGE_CHAT_SETTINGS,
-    AuthScope.MODERATOR_READ_CHATTERS,
-    # Channel Interaction
-    AuthScope.CHANNEL_MANAGE_POLLS,
-    AuthScope.CHANNEL_MANAGE_PREDICTIONS
+    # Add other scopes as needed...
 ]
 
 
@@ -56,15 +43,29 @@ async def run_bot():
     """
     Sets up the Twitch API, authenticates, loads cogs, and starts the chat bot.
     """
-    if not all([APP_ID, APP_SECRET, TARGET_CHANNEL]):
-        print("Error: CLIENT_ID, CLIENT_SECRET, or TARGET_CHANNEL environment variables are not set.")
+    # --- Load Configuration from JSON ---
+    if not os.path.exists(CONFIG_FILE):
+        print(f"Error: Configuration file '{CONFIG_FILE}' not found.")
+        return
+    with open(CONFIG_FILE, 'r') as f:
+        config = json.load(f)
+
+    # Extract channel names to join from the config
+    channel_configs = config.get('channels', [])
+    if not channel_configs:
+        print("Error: No channels configured in config.json")
+        return
+    
+    target_channels = [ch['name'] for ch in channel_configs]
+
+    if not all([APP_ID, APP_SECRET]):
+        print("Error: CLIENT_ID or CLIENT_SECRET environment variables are not set.")
         return
 
     # Initialize the Twitch API client
     twitch = await Twitch(APP_ID, APP_SECRET)
 
-    # --- Authentication ---
-    # Check if a token file already exists
+    # --- Authentication (no changes here) ---
     if os.path.exists(TOKEN_FILE):
         print("Found token file, attempting to refresh...")
         with open(TOKEN_FILE, 'r') as f:
@@ -72,7 +73,6 @@ async def run_bot():
         try:
             token, refresh_token = await refresh_access_token(creds['refresh'], APP_ID, APP_SECRET)
             print("Token refreshed successfully.")
-            # Save the newly refreshed token
             await on_token_refresh(token, refresh_token)
         except Exception as e:
             print(f"Failed to refresh token: {e}. Please re-authenticate.")
@@ -80,41 +80,57 @@ async def run_bot():
     else:
         token, refresh_token = None, None
 
-    # If no valid token, start the authentication process
     if token is None:
         print("No valid token found, starting authentication...")
         auth = UserAuthenticator(twitch, USER_SCOPES, force_verify=False)
         token, refresh_token = await auth.authenticate()
-        # Save the new token
         await on_token_refresh(token, refresh_token)
 
-    # Set the user authentication token. The refresh is handled at startup.
     await twitch.set_user_authentication(token, USER_SCOPES, refresh_token)
-
-    # Create the Chat instance
     chat = await Chat(twitch)
 
     # --- Load Cogs Dynamically ---
+    # --- Load Cogs Dynamically ---
     print("Loading cogs...")
-    for filename in os.listdir('./cogs'):
-        if filename.endswith('.py') and not filename.startswith('__'):
-            module_name = f'cogs.{filename[:-3]}'
-            try:
-                module = importlib.import_module(module_name)
-                if hasattr(module, 'setup'):
-                    await module.setup(twitch, chat, TARGET_CHANNEL)
-                    print(f"  - Successfully loaded cog: {filename[:-3]}")
+    
+    # Store cog instances here to handle dependencies, e.g., AdminCog -> MalLinkCog
+    loaded_cogs = {}
+
+    # Define the order to load cogs in, so dependencies are met
+    # The cog with the data (admin) must be loaded before the one that needs it (mal_link)
+    cog_load_order = ['admin', 'mal_link', 'blacklist', 'commands', 'fun']
+
+    for cog_name in cog_load_order:
+        filename = f"{cog_name}.py"
+        module_name = f'cogs.{cog_name}'
+        try:
+            module = importlib.import_module(module_name)
+            if hasattr(module, 'setup'):
+                # Check for specific dependencies
+                if cog_name == 'mal_link':
+                    admin_instance = loaded_cogs.get('admin')
+                    cog_instance = await module.setup(twitch, chat, channel_configs, admin_cog_instance=admin_instance)
                 else:
-                    print(f"  - Warning: Cog {filename[:-3]} has no setup function.")
-            except Exception as e:
-                print(f"  - Failed to load cog {filename[:-3]}: {e}")
+                    cog_instance = await module.setup(twitch, chat, channel_configs)
+                
+                # Store the created cog instance
+                if cog_instance:
+                    loaded_cogs[cog_name] = cog_instance
+
+                print(f"  - Successfully loaded cog: {cog_name}")
+            else:
+                print(f"  - Warning: Cog {cog_name} has no setup function.")
+        except ImportError:
+            print(f"  - Skipping {cog_name}, file not found.")
+        except Exception as e:
+            print(f"  - Failed to load cog {cog_name}: {e}")
 
     # Start the chat connection
     chat.start()
 
-    # Join the channel and start listening for messages
-    print(f"Joining channel: {TARGET_CHANNEL}")
-    await chat.join_room(TARGET_CHANNEL)
+    # --- Join all channels specified in the config ---
+    print(f"Joining channels: {', '.join(target_channels)}")
+    await chat.join_room(target_channels)
     print("Bot is running. Press Ctrl+C to shut down.")
 
     # Keep the bot running indefinitely
@@ -123,10 +139,10 @@ async def run_bot():
     except KeyboardInterrupt:
         print("Bot is shutting down.")
     finally:
-        # Clean up resources
         await chat.stop()
         await twitch.close()
         print("Bot has been shut down.")
+
 
 if __name__ == "__main__":
     asyncio.run(run_bot())

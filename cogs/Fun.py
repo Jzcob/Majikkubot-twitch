@@ -1,8 +1,9 @@
 import random
 from twitchAPI.chat import Chat, ChatMessage, ChatEvent
 from twitchAPI.twitch import Twitch
+from typing import List, Dict
 
-# A list of 50 possible responses for the 8-ball command
+# The list of 8-ball responses remains the same
 EIGHT_BALL_RESPONSES = [
     # Positive Responses
     "It is certain.", "It is decidedly so.", "Without a doubt.", "Yes, definitely.",
@@ -28,38 +29,34 @@ EIGHT_BALL_RESPONSES = [
 ]
 
 class FunCog:
-    def __init__(self, twitch: Twitch, chat: Chat, target_channel: str):
+    # The __init__ signature is changed to accept the list of configs, but we don't need to store it.
+    def __init__(self, twitch: Twitch, chat: Chat, channel_configs: List[Dict]):
         self.twitch = twitch
         self.chat = chat
-        self.target_channel = target_channel
-        self.event_name = ChatEvent.MESSAGE # The event this cog listens to
-
-        # To be populated by the setup method
+        self.event_name = ChatEvent.MESSAGE
         self.bot_login_name = None
 
     async def setup(self):
-        """Performs async setup required for the cog."""
+        """Performs async setup required for the cog. (No changes needed here)"""
         try:
-            # Get authenticated bot user info to prevent the bot from replying to itself
-            bot_user_gen = self.twitch.get_users()
-            bot_user_data = [user async for user in bot_user_gen]
+            bot_user_data = [user async for user in self.twitch.get_users()]
             if not bot_user_data:
                 raise Exception("Could not get bot's user information for FunCog.")
             self.bot_login_name = bot_user_data[0].login.lower()
-            
         except Exception as e:
             print(f"Error during FunCog setup: {e}")
             raise e
 
     async def on_message(self, msg: ChatMessage):
-        """This function is called by the Chat instance for each new message."""
-        # The bot should not react to its own messages
+        """This function handles messages from all connected channels."""
         if msg.user.name.lower() == self.bot_login_name:
             return
 
-        # --- Command Handling ---
         if not msg.text.startswith('!'):
             return
+
+        # Get the channel where the message originated
+        channel_name = msg.room.name
 
         parts = msg.text.lower().split()
         command = parts[0]
@@ -67,17 +64,19 @@ class FunCog:
         if command == '!8ball':
             # Check if the user actually asked a question
             if len(parts) < 2:
-                await self.chat.send_message(self.target_channel, f"@{msg.user.name}, you need to ask a question!")
+                # Send the reply back to the correct channel
+                await self.chat.send_message(channel_name, f"@{msg.user.name}, you need to ask a question! 🤔")
                 return
             
-            # Pick a random response and send it
+            # Pick a random response and send it to the correct channel
             response = random.choice(EIGHT_BALL_RESPONSES)
-            await self.chat.send_message(self.target_channel, f"@{msg.user.name}, {response}")
+            await self.chat.send_message(channel_name, f"@{msg.user.name}, {response}")
 
 
-# This setup function is called by main.py to load the cog
-async def setup(twitch: Twitch, chat: Chat, target_channel: str):
+# The main setup function signature is updated to match the main script
+async def setup(twitch: Twitch, chat: Chat, channel_configs: List[Dict]):
     """Initializes and registers the cog with the bot."""
-    cog = FunCog(twitch, chat, target_channel)
+    cog = FunCog(twitch, chat, channel_configs)
     await cog.setup()
     chat.register_event(cog.event_name, cog.on_message)
+    print("FunCog loaded and message handler registered.")

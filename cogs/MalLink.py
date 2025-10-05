@@ -1,70 +1,72 @@
 import re
-import os
 import discord
 import aiohttp
 from twitchAPI.chat import Chat, ChatMessage, ChatEvent
 from twitchAPI.twitch import Twitch
+from typing import List, Dict, Optional, Any
 
 class MalLinkCog:
-    def __init__(self, twitch: Twitch, chat: Chat, target_channel: str):
+    def __init__(self, twitch: Twitch, chat: Chat, channel_configs: List[Dict]):
         self.twitch = twitch
         self.chat = chat
-        self.target_channel = target_channel
-        self.event_name = ChatEvent.MESSAGE # The event this cog listens to
-        self.regulars = set() # This will be populated by the setup function
+        self.channel_configs = channel_configs
+        self.event_name = ChatEvent.MESSAGE
+        
+        # This will hold the regulars dict from the AdminCog, e.g., {'channel': {'user1', ...}}
+        self.regulars_by_channel = {}
+        # This will hold channel-specific configs and fetched IDs
+        self.channel_data = {}
 
-        # --- Cog-specific Configuration ---
-        self.DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_MOD') # Using your updated variable name
-        self.DISCORD_MOD_ROLE_ID = os.environ.get('DISCORD_MOD_ROLE_ID')
-        
-        # Regex to find any potential link with spaces around the dot
+        # Regex patterns are global and don't need to change
         self.LINK_REGEX = re.compile(
-            r"$(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,9}(?![a-zA-Z0-9])(?:\/\S*)?$"
+            r"(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\s*\.\s*)+[a-zA-Z]{2,9}(?![a-zA-Z0-9])(?:\/\S*)?"
         )
-        
-        # Regex to specifically find twitch.tv or clips.twitch.tv links, even with spaces
         self.TWITCH_LINK_REGEX = re.compile(r'(\bclips\s*\.\s*)?twitch\s*\.\s*tv\b', re.IGNORECASE)
         
-        # To be populated by the setup method
-        self.broadcaster_id = None
+        # Bot's own info, fetched once during setup
         self.moderator_id = None
         self.bot_login_name = None
 
-    async def setup(self, admin_cog_instance=None):
-        """Performs async setup and receives the regulars list from the admin cog."""
-        if admin_cog_instance:
-            self.regulars = admin_cog_instance.regulars
+    async def setup(self, admin_cog_instance: Optional[Any] = None):
+        """Performs async setup and receives the regulars dictionary from the AdminCog."""
+        # 1. Get the shared regulars list from the AdminCog instance
+        if admin_cog_instance and hasattr(admin_cog_instance, 'regulars_by_channel'):
+            self.regulars_by_channel = admin_cog_instance.regulars_by_channel
+            print("  - MalLinkCog successfully received regulars list from AdminCog.")
 
         try:
-            # Get broadcaster info
-            users_gen = self.twitch.get_users(logins=[self.target_channel])
-            broadcaster_data = [user async for user in users_gen]
-            if not broadcaster_data:
-                raise Exception(f"Could not find user for channel '{self.target_channel}'")
-            self.broadcaster_id = broadcaster_data[0].id
-
-            # Get authenticated bot user info
-            bot_user_gen = self.twitch.get_users()
-            bot_user_data = [user async for user in bot_user_gen]
+            # 2. Get the bot's own user info
+            bot_user_data = [user async for user in self.twitch.get_users()]
             if not bot_user_data:
                 raise Exception("Could not get bot's user information.")
-            bot_user_info = bot_user_data[0]
-            self.moderator_id = bot_user_info.id
-            self.bot_login_name = bot_user_info.login.lower()
-            
+            self.moderator_id = bot_user_data[0].id
+            self.bot_login_name = bot_user_data[0].login.lower()
+
+            # 3. Get info for all broadcasters in a single API call
+            channel_names = [config['name'] for config in self.channel_configs]
+            broadcasters_data = {user.login.lower(): user async for user in self.twitch.get_users(logins=channel_names)}
+
+            # 4. Populate self.channel_data with combined config and fetched IDs
+            for config in self.channel_configs:
+                channel_name = config['name'].lower()
+                broadcaster = broadcasters_data.get(channel_name)
+                if broadcaster:
+                    self.channel_data[channel_name] = {**config, 'broadcaster_id': broadcaster.id}
+                    print(f"  - MalLinkCog configured for #{channel_name}")
+                else:
+                    print(f"  - WARNING: Could not find Twitch user '{channel_name}' in MalLinkCog.")
         except Exception as e:
             print(f"Error during MalLinkCog setup: {e}")
             raise e
 
-    async def send_discord_webhook(self, user_name: str, original_message: str):
-        """Sends a timeout alert to a Discord channel via webhook."""
-        if not self.DISCORD_WEBHOOK_URL:
-            print("Warning: DISCORD_WEBHOOK_MOD is not set. Cannot send alert.")
+    async def send_discord_webhook(self, webhook_url: str, mod_role_id: str, user_name: str, original_message: str):
+        """Sends a timeout alert to the correct Discord channel via its webhook."""
+        if not webhook_url:
             return
         
         async with aiohttp.ClientSession() as session:
-            webhook = discord.Webhook.from_url(self.DISCORD_WEBHOOK_URL, session=session)
-            mod_mention = f"<@&{self.DISCORD_MOD_ROLE_ID}>" if self.DISCORD_MOD_ROLE_ID else "@moderators"
+            webhook = discord.Webhook.from_url(webhook_url, session=session)
+            mod_mention = f"<@&{mod_role_id}>" if mod_role_id else "@moderators"
             
             embed = discord.Embed(title="User Timed Out for Posting Link", color=discord.Color.red())
             embed.add_field(name="Username", value=user_name, inline=False)
@@ -74,32 +76,53 @@ class MalLinkCog:
             await webhook.send(content=mod_mention, embed=embed)
 
     async def on_message(self, msg: ChatMessage):
-        """This function is called by the Chat instance for each new message."""
+        """Checks messages for non-Twitch links and takes action."""
         if msg.user.name.lower() == self.bot_login_name:
             return
 
-        user_badges = msg.user.badges or {}
-        if msg.user.name.lower() == self.target_channel.lower() or 'moderator' in user_badges or 'vip' in user_badges or 'admin' in user_badges or msg.user.name.lower() in self.regulars:
+        channel_name = msg.room.name.lower()
+        current_config = self.channel_data.get(channel_name)
+        if not current_config:
             return
 
+        # 1. Check if the user is exempt (broadcaster, mod, vip, or regular for THAT channel)
+        user_badges = msg.user.badges or {}
+        current_regulars = self.regulars_by_channel.get(channel_name, set())
+        is_exempt = (
+            msg.user.name.lower() == channel_name or
+            any(badge in user_badges for badge in ['moderator', 'vip', 'admin']) or
+            msg.user.name.lower() in current_regulars
+        )
+        if is_exempt:
+            return
+
+        # 2. Check for a non-Twitch link
         if self.LINK_REGEX.search(msg.text) and not self.TWITCH_LINK_REGEX.search(msg.text):
-            print(f"Non-Twitch link detected from {msg.user.name}. Taking action...")
+            print(f"[{channel_name}] Non-Twitch link from {msg.user.name}. Taking action...")
             try:
-                await self.chat.send_message(self.target_channel, f'/delete {msg.id}')
+                # Delete the message and time out the user for 600 seconds
+                await self.chat.send_message(channel_name, f'/delete {msg.id}')
                 await self.twitch.ban_user(
-                    broadcaster_id=self.broadcaster_id,
+                    broadcaster_id=current_config['broadcaster_id'],
                     moderator_id=self.moderator_id,
                     user_id=msg.user.id,
                     duration=600,
-                    reason="Posting non-Twitch links."
+                    reason="Posting non-Twitch links is not allowed."
                 )
-                await self.send_discord_webhook(msg.user.name, msg.text)
+                # Send an alert to the correct Discord moderation webhook
+                await self.send_discord_webhook(
+                    webhook_url=current_config.get('discord_webhook_mod'),
+                    mod_role_id=current_config.get('discord_mod_role_id'),
+                    user_name=msg.user.name,
+                    original_message=msg.text
+                )
             except Exception as e:
-                print(f"Error taking action against {msg.user.name}: {e}")
+                print(f"[{channel_name}] Error taking action against {msg.user.name}: {e}")
 
-# This setup function is called by main.py to load the cog
-async def setup(twitch: Twitch, chat: Chat, target_channel: str, admin_cog_instance=None):
-    """Initializes and registers the cog with the bot."""
-    cog = MalLinkCog(twitch, chat, target_channel)
+# This setup function is called by your main script
+async def setup(twitch: Twitch, chat: Chat, channel_configs: List[Dict], admin_cog_instance: Optional[Any] = None):
+    """Initializes and registers the cog, passing the AdminCog instance to it."""
+    cog = MalLinkCog(twitch, chat, channel_configs)
     await cog.setup(admin_cog_instance)
     chat.register_event(cog.event_name, cog.on_message)
+    print("MalLinkCog loaded and message handler registered.")
