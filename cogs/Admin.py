@@ -1,4 +1,5 @@
 import json
+import re
 from twitchAPI.chat import Chat, ChatMessage, ChatEvent
 from twitchAPI.twitch import Twitch
 
@@ -6,10 +7,15 @@ class AdminCog:
     def __init__(self, twitch: Twitch, chat: Chat, channel_configs: list):
         self.twitch = twitch
         self.chat = chat
-        # This dictionary will hold the set of regulars for each channel, e.g., {'channel_name': {'user1', 'user2'}}
+        # This dictionary will hold the set of regulars for each channel
         self.regulars_by_channel = {}
         self.event_name = ChatEvent.MESSAGE
         self.bot_login_name = None
+
+        # Regex to ensure we don't auto-promote someone sending a link
+        self.LINK_REGEX = re.compile(
+            r"(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\s*\.\s*)+[a-zA-Z]{2,9}(?![a-zA-Z0-9])(?:\/\S*)?"
+        )
 
         # Load regulars for each configured channel
         for config in channel_configs:
@@ -34,7 +40,6 @@ class AdminCog:
     def save_regulars(self, channel_name: str):
         """Saves the current list of regular users for a specific channel."""
         filename = self.get_regulars_filename(channel_name)
-        # Get the set of regulars for the given channel
         regulars_set = self.regulars_by_channel.get(channel_name, set())
         with open(filename, 'w') as f:
             json.dump(list(regulars_set), f, indent=4)
@@ -51,60 +56,74 @@ class AdminCog:
             raise e
 
     async def on_message(self, msg: ChatMessage):
-        """Handles chat commands for managing regulars in a multi-channel context."""
+        """Handles chat commands and Auto-Regular logic."""
         # Ignore messages from the bot itself
         if msg.user.name.lower() == self.bot_login_name:
             return
 
-        # Ignore messages that aren't commands
-        if not msg.text.startswith('!'):
-            return
-
-        # Get the channel where the message was sent
         channel_name = msg.room.name.lower()
-
-        # Check for moderator or broadcaster permissions in the channel where the command was used
-        user_badges = msg.user.badges or {}
-        is_mod = 'moderator' in user_badges
-        is_broadcaster = msg.user.name.lower() == channel_name
-        if not (is_mod or is_broadcaster):
-            return
-
-        # Get the specific list of regulars for this channel
         current_regulars_list = self.regulars_by_channel.get(channel_name)
+        
+        # Guard clause: Ensure we have data for this channel
         if current_regulars_list is None:
-            # This should not happen if configured correctly, but it's a good safeguard
-            print(f"Warning: Received command in unconfigured channel '{channel_name}'")
             return
 
-        parts = msg.text.lower().split()
-        command = parts[0]
+        username = msg.user.name.lower()
 
-        if command == '!addregular':
-            if len(parts) < 2:
-                await self.chat.send_message(channel_name, "Usage: !addregular <username>")
-                return
+        # --- 1. COMMAND HANDLER ---
+        if msg.text.startswith('!'):
+            user_badges = msg.user.badges or {}
+            is_mod = 'moderator' in user_badges
+            is_broadcaster = username == channel_name
             
-            username_to_add = parts[1].lstrip('@')
-            if username_to_add in current_regulars_list:
-                await self.chat.send_message(channel_name, f"{username_to_add} is already a regular.")
-            else:
-                current_regulars_list.add(username_to_add)
-                self.save_regulars(channel_name)
-                await self.chat.send_message(channel_name, f"{username_to_add} has been added to the regulars list.")
+            # Only process manual commands if user is Mod or Broadcaster
+            if is_mod or is_broadcaster:
+                parts = msg.text.lower().split()
+                command = parts[0]
 
-        elif command == '!removeregular':
-            if len(parts) < 2:
-                await self.chat.send_message(channel_name, "Usage: !removeregular <username>")
+                if command == '!addregular':
+                    if len(parts) < 2:
+                        await self.chat.send_message(channel_name, "Usage: !addregular <username>")
+                        return
+                    
+                    username_to_add = parts[1].lstrip('@')
+                    if username_to_add in current_regulars_list:
+                        await self.chat.send_message(channel_name, f"{username_to_add} is already a regular.")
+                    else:
+                        current_regulars_list.add(username_to_add)
+                        self.save_regulars(channel_name)
+                        await self.chat.send_message(channel_name, f"{username_to_add} has been added to the regulars list.")
+                    return # Exit after handling command
+
+                elif command == '!removeregular':
+                    if len(parts) < 2:
+                        await self.chat.send_message(channel_name, "Usage: !removeregular <username>")
+                        return
+
+                    username_to_remove = parts[1].lstrip('@')
+                    if username_to_remove in current_regulars_list:
+                        current_regulars_list.remove(username_to_remove)
+                        self.save_regulars(channel_name)
+                        await self.chat.send_message(channel_name, f"{username_to_remove} has been removed from the regulars list.")
+                    else:
+                        await self.chat.send_message(channel_name, f"{username_to_remove} is not in the regulars list.")
+                    return # Exit after handling command
+
+        # --- 2. AUTO-ADD REGULAR LOGIC ---
+        # If the user is NOT a regular, check if we should add them
+        if username not in current_regulars_list:
+            
+            # CRITICAL: Do not auto-add if the message contains a link.
+            # We want MalLinkCog to ban them, not AdminCog to whitelist them.
+            if self.LINK_REGEX.search(msg.text):
+                # We do nothing here. MalLinkCog will see the link, 
+                # see they aren't regular, and time them out.
                 return
 
-            username_to_remove = parts[1].lstrip('@')
-            if username_to_remove in current_regulars_list:
-                current_regulars_list.remove(username_to_remove)
-                self.save_regulars(channel_name)
-                await self.chat.send_message(channel_name, f"{username_to_remove} has been removed from the regulars list.")
-            else:
-                await self.chat.send_message(channel_name, f"{username_to_remove} is not in the regulars list.")
+            # If no link, they are a "normal user". Add them to the list.
+            current_regulars_list.add(username)
+            self.save_regulars(channel_name)
+            print(f"[{channel_name}] Auto-added {username} to regulars list.")
 
 
 # This setup function is called by your main script to load the cog
