@@ -98,6 +98,12 @@ class CommandsCog:
                 youtube_message = f"Check out the YouTube channel! {youtube_link}"
                 await self.chat.send_message(channel_name, youtube_message)
         
+        elif command == "!hockeybot":
+            hockeybot_link = "Hello! Jzcob's Discord Hockey bot can can be found here: https://ptb.discord.com/discovery/applications/1156302042969677845"
+            if channel_name == "jzcob":
+                await self.chat.send_message(channel_name, hockeybot_link)
+            else:
+                return
 
 # This setup function is called by your main script
 async def setup(twitch: Twitch, chat: Chat, channel_configs: List[Dict]):
