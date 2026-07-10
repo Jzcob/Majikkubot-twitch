@@ -53,6 +53,7 @@ Here is the complete list of commands available in the bot.
 | `!lurk` | Announces that the user is stepping away but continuing to support the stream. | |
 | `!discord` | Drops the channel's configured Discord invite link. | If used by a Mod/Broadcaster, the bot will also **Pin** the message as a chat announcement. |
 | `!youtube` | Drops the channel's configured YouTube link. | |
+| `!tiktok` | Drops the channel's configured Tiktok link. | |
 | `!hockeybot` | Provides a link to Jzcob's Discord Hockey bot. | **Channel Specific:** This command only works when executed in the `jzcob` Twitch channel. |
 
 ### Fun Commands
