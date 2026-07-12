@@ -18,8 +18,8 @@ try:
 except ImportError:
     print("dotenv library not found, continuing without it.")
 
-APP_ID = os.environ.get('CLIENT_ID')
-APP_SECRET = os.environ.get('CLIENT_SECRET')
+APP_ID = os.getenv('CLIENT_ID')
+APP_SECRET = os.getenv('CLIENT_SECRET')
 TOKEN_FILE = 'my_token.json'
 CONFIG_FILE = 'config.json'
 

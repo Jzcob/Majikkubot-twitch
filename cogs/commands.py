@@ -98,6 +98,14 @@ class CommandsCog:
                 youtube_message = f"Check out the YouTube channel! {youtube_link}"
                 await self.chat.send_message(channel_name, youtube_message)
         
+        elif command == '!tiktok':
+            tiktok_link = current_config.get('tiktok_channel_link')
+            if tiktok_link:
+                tiktok_message = f"Follow on TikTok! {tiktok_link}"
+                await self.chat.send_message(channel_name, tiktok_message)
+            else:
+                return # Don't do anything if the link isn't in config.json
+            
         elif command == "!hockeybot":
             hockeybot_link = "Hello! Jzcob's Discord Hockey bot can can be found here: https://ptb.discord.com/discovery/applications/1156302042969677845"
             if channel_name == "jzcob":

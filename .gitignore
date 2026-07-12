@@ -4,3 +4,5 @@ my_token.json
 *.pyc
 cogs/__pycache__/MalLink.cpython-313.pyc
 config.json
+cogs/setup.py
+test.py
