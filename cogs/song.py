@@ -30,9 +30,18 @@ class Song:
                     if response.status == 200:
                         data = await response.json()
                         try:
-                            # Last.fm returns the most recent track first.
-                            track = data['recenttracks']['track'][0]
+                            track_data = data['recenttracks']['track']
                             
+                            # Last.fm returns a dict if there's only 1 track, or a list if > 1
+                            if isinstance(track_data, list):
+                                if not track_data: # If the list is completely empty
+                                    return "Nothing is currently playing."
+                                track = track_data[0]
+                            elif isinstance(track_data, dict):
+                                track = track_data
+                            else:
+                                return "Could not parse the song data."
+
                             # The '@attr' tag only exists if the song is actively playing right now.
                             if '@attr' in track and track['@attr'].get('nowplaying') == 'true':
                                 artist = track['artist']['#text']
@@ -40,7 +49,7 @@ class Song:
                                 return f"🎵 Now playing: {song} - {artist}"
                             else:
                                 return "Nothing is currently playing."
-                        except (KeyError, IndexError):
+                        except (KeyError, IndexError, TypeError):
                             return "Could not parse the song data."
                     else:
                         return "Error connecting to the Last.fm API."
@@ -91,7 +100,7 @@ class Song:
 # This setup function is called by your main script to load this specific cog
 async def setup(twitch: Twitch, chat: Chat, channel_configs: List[Dict]):
     """Initializes and registers the cog with the bot."""
-    cog = SongCog(twitch, chat, channel_configs)
+    cog = Song(twitch, chat, channel_configs)
     await cog.setup()
     chat.register_event(cog.event_name, cog.on_message)
     print("SongCog loaded and message handler registered.")

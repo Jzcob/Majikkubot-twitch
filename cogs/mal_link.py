@@ -102,12 +102,11 @@ class MalLinkCog:
             try:
                 # Delete the message and time out the user for 600 seconds
                 await self.chat.send_message(channel_name, f'/delete {msg.id}')
-                await self.twitch.ban_user(
+                await self.twitch.delete_chat_message(
                     broadcaster_id=current_config['broadcaster_id'],
                     moderator_id=self.moderator_id,
-                    user_id=msg.user.id,
-                    duration=600,
-                    reason="Posting non-Twitch links is not allowed."
+                    message_id=msg.id
+
                 )
                 # Send an alert to the correct Discord moderation webhook
                 await self.send_discord_webhook(

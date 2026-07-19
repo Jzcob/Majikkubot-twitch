@@ -98,7 +98,7 @@ async def run_bot():
 
     # Define the order to load cogs in, so dependencies are met
     # The cog with the data (admin) must be loaded before the one that needs it (mal_link)
-    cog_load_order = ['admin', 'mal_link', 'blacklist', 'commands', 'fun']
+    cog_load_order = ['admin', 'mal_link', 'blacklist', 'commands', 'fun', 'song']
 
     for cog_name in cog_load_order:
         filename = f"{cog_name}.py"
