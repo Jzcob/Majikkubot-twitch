@@ -1,3 +1,5 @@
+import discord
+from discord.ext import commands
 import asyncio
 import os
 import importlib
@@ -6,12 +8,9 @@ from twitchAPI.twitch import Twitch
 from twitchAPI.oauth import UserAuthenticator, refresh_access_token
 from twitchAPI.type import AuthScope
 from twitchAPI.chat import Chat
+import traceback
 
 # --- Configuration ---
-# Your Client ID and Secret should be in a .env file
-# Channel-specific settings are now in config.json
-
-# Load environment variables for credentials
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -23,12 +22,10 @@ APP_SECRET = os.getenv('CLIENT_SECRET')
 TOKEN_FILE = 'my_token.json'
 CONFIG_FILE = 'config.json'
 
-# Define the necessary scopes for your bot.
 USER_SCOPES = [
     AuthScope.CHAT_READ,
     AuthScope.CHAT_EDIT,
     AuthScope.MODERATOR_MANAGE_BANNED_USERS,
-    # Add other scopes as needed...
 ]
 
 
@@ -39,18 +36,14 @@ async def on_token_refresh(token: str, refresh: str):
         json.dump({'token': token, 'refresh': refresh}, f, indent=4)
 
 
-async def run_bot():
-    """
-    Sets up the Twitch API, authenticates, loads cogs, and starts the chat bot.
-    """
-    # --- Load Configuration from JSON ---
+async def run_twitch_bot():
+    """Sets up Twitch API, authenticates, loads cogs, and starts chat bot."""
     if not os.path.exists(CONFIG_FILE):
         print(f"Error: Configuration file '{CONFIG_FILE}' not found.")
         return
     with open(CONFIG_FILE, 'r') as f:
         config = json.load(f)
 
-    # Extract channel names to join from the config
     channel_configs = config.get('channels', [])
     if not channel_configs:
         print("Error: No channels configured in config.json")
@@ -62,10 +55,8 @@ async def run_bot():
         print("Error: CLIENT_ID or CLIENT_SECRET environment variables are not set.")
         return
 
-    # Initialize the Twitch API client
     twitch = await Twitch(APP_ID, APP_SECRET)
 
-    # --- Authentication (no changes here) ---
     if os.path.exists(TOKEN_FILE):
         print("Found token file, attempting to refresh...")
         with open(TOKEN_FILE, 'r') as f:
@@ -89,60 +80,156 @@ async def run_bot():
     await twitch.set_user_authentication(token, USER_SCOPES, refresh_token)
     chat = await Chat(twitch)
 
-    # --- Load Cogs Dynamically ---
-    # --- Load Cogs Dynamically ---
-    print("Loading cogs...")
-    
-    # Store cog instances here to handle dependencies, e.g., AdminCog -> MalLinkCog
+    # --- Load Twitch Cogs Dynamically ---
+    print("Loading Twitch cogs...")
     loaded_cogs = {}
+    cog_directory = "./twitch_cogs"
 
-    # Define the order to load cogs in, so dependencies are met
-    # The cog with the data (admin) must be loaded before the one that needs it (mal_link)
-    cog_load_order = ['admin', 'mal_link', 'blacklist', 'commands', 'fun', 'song']
+    if os.path.exists(cog_directory):
+        filenames = [
+            f for f in os.listdir(cog_directory)
+            if f.endswith('.py') and not f.startswith('__')
+        ]
 
-    for cog_name in cog_load_order:
-        filename = f"{cog_name}.py"
-        module_name = f'cogs.{cog_name}'
-        try:
-            module = importlib.import_module(module_name)
-            if hasattr(module, 'setup'):
-                # Check for specific dependencies
-                if cog_name == 'mal_link':
-                    admin_instance = loaded_cogs.get('admin')
-                    cog_instance = await module.setup(twitch, chat, channel_configs, admin_cog_instance=admin_instance)
+        # Prioritize 'admin.py' so dependent cogs like 'mal_link' receive its instance
+        if 'admin.py' in filenames:
+            filenames.remove('admin.py')
+            filenames.insert(0, 'admin.py')
+
+        for filename in filenames:
+            cog_name = filename[:-3]
+            module_name = f'twitch_cogs.{cog_name}'
+            try:
+                module = importlib.import_module(module_name)
+                if hasattr(module, 'setup'):
+                    if cog_name == 'mal_link':
+                        admin_instance = loaded_cogs.get('admin')
+                        cog_instance = await module.setup(twitch, chat, channel_configs, admin_cog_instance=admin_instance)
+                    else:
+                        cog_instance = await module.setup(twitch, chat, channel_configs)
+                    
+                    if cog_instance:
+                        loaded_cogs[cog_name] = cog_instance
+
+                    print(f"  - Successfully loaded cog: {cog_name}")
                 else:
-                    cog_instance = await module.setup(twitch, chat, channel_configs)
-                
-                # Store the created cog instance
-                if cog_instance:
-                    loaded_cogs[cog_name] = cog_instance
+                    print(f"  - Warning: Cog {cog_name} has no setup function.")
+            except Exception as e:
+                print(f"  - Failed to load cog {cog_name}: {e}")
+    else:
+        print(f"Warning: Directory '{cog_directory}' not found.")
 
-                print(f"  - Successfully loaded cog: {cog_name}")
-            else:
-                print(f"  - Warning: Cog {cog_name} has no setup function.")
-        except ImportError:
-            print(f"  - Skipping {cog_name}, file not found.")
-        except Exception as e:
-            print(f"  - Failed to load cog {cog_name}: {e}")
-
-    # Start the chat connection
     chat.start()
 
-    # --- Join all channels specified in the config ---
     print(f"Joining channels: {', '.join(target_channels)}")
     await chat.join_room(target_channels)
-    print("Bot is running. Press Ctrl+C to shut down.")
+    print("Twitch bot is running.")
 
-    # Keep the bot running indefinitely
     try:
         await asyncio.Event().wait()
-    except KeyboardInterrupt:
-        print("Bot is shutting down.")
+    except asyncio.CancelledError:
+        pass
     finally:
         await chat.stop()
         await twitch.close()
-        print("Bot has been shut down.")
+        print("Twitch bot has shut down.")
+
+
+class MyBot(commands.Bot):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    async def setup_hook(self):
+        print("Loading discord cogs...")
+        cog_directory = ["./discord_cogs"]
+
+        for directory in cog_directory:
+            if not os.path.exists(directory):
+                print(f"Warning: Directory '{directory}' not found.")
+                continue
+                
+            for filename in os.listdir(directory):
+                if filename.endswith('.py') and not filename.startswith('__'):
+                    path = directory.replace('./', '').replace('/', '.')
+                    cog_path = f"{path}.{filename[:-3]}"
+                    
+                    try:
+                        await self.load_extension(cog_path)
+                        print(f'✅ Loaded: `{cog_path}`')
+                    except Exception as e:
+                        print(f"❌ Failed to load cog {cog_path}: {e}")
+                        traceback.print_exc()
+        print("--------------------")
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.auto_moderation_configuration = True
+intents.reactions = True
+intents.members = False 
+
+bot = MyBot(command_prefix='!', intents=intents, help_command=None)
+
+
+def is_owner(ctx):
+    owner_id = os.getenv("BOT_OWNER_ID")
+    return owner_id is not None and ctx.author.id == int(owner_id)
+
+
+@bot.command()
+async def sync(ctx) -> None:
+    if is_owner(ctx):
+        try:
+            fmt = await ctx.bot.tree.sync()
+            print(f"Synced {len(fmt)} commands.")
+            embed = discord.Embed(title="Synced", description=f"Synced {len(fmt)} commands.", color=0x00ff00)
+            await ctx.send(embed=embed)
+        except Exception as e:
+            print(e)
+            await ctx.send(f"Error syncing commands: {e}")
+    else:
+        embed = discord.Embed(title="Error", description="This is a bot admin command restricted to only the bot owner.", color=0xff0000)
+        await ctx.send(embed=embed)
+
+
+@bot.command()
+async def syncserver(ctx) -> None:
+    if is_owner(ctx):
+        try:
+            fmt = await ctx.bot.tree.sync(guild=ctx.guild)
+            print(f"Synced {len(fmt)} commands: {[c.name for c in fmt]}")
+            embed = discord.Embed(title="Synced", description=f"Synced {len(fmt)} commands to this server.", color=0x00ff00)
+            await ctx.send(embed=embed)
+        except Exception as e:
+            print(f"Sync Error: {e}")
+            await ctx.send(f"Sync Error: {e}")
+    else:
+        embed = discord.Embed(title="Error", description="This is a bot admin command restricted to only the bot owner.", color=0xff0000)
+        await ctx.send(embed=embed)
+
+
+@bot.event
+async def on_ready():
+    print(f"Logged on as {bot.user}")
+    print(f"Bot is ready and connected to {len(bot.guilds)} servers.")
+
+
+async def main():
+    discord_token = os.getenv("BOT_TOKEN")
+    if not discord_token:
+        print("Error: BOT_TOKEN environment variable not set.")
+        return
+
+    # Run both bots concurrently
+    await asyncio.gather(
+        run_twitch_bot(),
+        bot.start(discord_token)
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(run_bot())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Shutting down bots...")
+    except Exception as e:
+        print(f"Error occurred: {e}")

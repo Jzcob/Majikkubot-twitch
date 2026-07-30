@@ -1,3 +1,4 @@
+import os
 import re
 import discord
 import aiohttp
@@ -11,13 +12,21 @@ class MalLinkCog:
         self.chat = chat
         self.channel_configs = channel_configs
         self.event_name = ChatEvent.MESSAGE
-        
+
+        # Initialize the extra banned words list
+        self.extra_banned_list = []
+        # Parse the extra banned words from the environment variable
+        extra_banned_words = os.getenv("EXTRA_BANNED_WORDS", "")
+        if extra_banned_words:
+            self.extra_banned_list = [word.strip() for word in extra_banned_words.split(",") if word.strip()]
+        print(f"  - Extra banned words initialized: {self.extra_banned_list}")
         # This will hold the regulars dict from the AdminCog, e.g., {'channel': {'user1', ...}}
         self.regulars_by_channel = {}
         # This will hold channel-specific configs and fetched IDs
         self.channel_data = {}
 
         # Regex patterns are global and don't need to change
+        # Updated to catch Cyrillic homoglyphs and alternative dot characters
         self.LINK_REGEX = re.compile(
             r"(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\s*\.\s*)+[a-zA-Z]{2,9}(?![a-zA-Z0-9])(?:\/\S*)?"
         )
@@ -60,7 +69,7 @@ class MalLinkCog:
             raise e
 
     async def send_discord_webhook(self, webhook_url: str, mod_role_id: str, user_name: str, original_message: str):
-        """Sends a timeout alert to the correct Discord channel via its webhook."""
+        """Sends an alert to the correct Discord channel via its webhook."""
         if not webhook_url:
             return
         
@@ -68,7 +77,8 @@ class MalLinkCog:
             webhook = discord.Webhook.from_url(webhook_url, session=session)
             mod_mention = f"<@&{mod_role_id}>" if mod_role_id else "@moderators"
             
-            embed = discord.Embed(title="User Timed Out for Posting Link", color=discord.Color.red())
+            # Updated embed title to reflect that only a deletion occurred
+            embed = discord.Embed(title="User Message Deleted for Posting Link", color=discord.Color.red())
             embed.add_field(name="Username", value=user_name, inline=False)
             embed.add_field(name="Original Message", value=f"```{original_message}```", inline=False)
             embed.set_footer(text="Please review user's chat history for a potential ban.")
@@ -98,16 +108,15 @@ class MalLinkCog:
 
         # 2. Check for a non-Twitch link
         if self.LINK_REGEX.search(msg.text) and not self.TWITCH_LINK_REGEX.search(msg.text):
-            print(f"[{channel_name}] Non-Twitch link from {msg.user.name}. Taking action...")
+            print(f"[{channel_name}] Non-Twitch link from {msg.user.name}. Deleting message...")
             try:
-                # Delete the message and time out the user for 600 seconds
-                await self.chat.send_message(channel_name, f'/delete {msg.id}')
+                # Silently delete the message via the API
                 await self.twitch.delete_chat_message(
                     broadcaster_id=current_config['broadcaster_id'],
                     moderator_id=self.moderator_id,
                     message_id=msg.id
-
                 )
+                
                 # Send an alert to the correct Discord moderation webhook
                 await self.send_discord_webhook(
                     webhook_url=current_config.get('discord_webhook_mod'),
@@ -116,7 +125,7 @@ class MalLinkCog:
                     original_message=msg.text
                 )
             except Exception as e:
-                print(f"[{channel_name}] Error taking action against {msg.user.name}: {e}")
+                print(f"[{channel_name}] Error deleting message from {msg.user.name}: {e}")
 
 # This setup function is called by your main script
 async def setup(twitch: Twitch, chat: Chat, channel_configs: List[Dict], admin_cog_instance: Optional[Any] = None):
