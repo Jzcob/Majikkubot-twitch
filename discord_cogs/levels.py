@@ -180,6 +180,11 @@ class Levels(commands.Cog):
             new_level = current_level
 
             if current_level < len(XP_LIMITS) and new_xp >= XP_LIMITS[current_level]:
+                if message.guild.id == 1518779915477188788:
+                    synrole = message.guild.get_role(1520285177434214540)
+                    if synrole not in message.author.roles:
+                        await message.author.add_roles(synrole)
+                    
                 new_level += 1
                 await message.channel.send(f"🎉 {message.author.mention} has leveled up to **Level {new_level}**!")
 

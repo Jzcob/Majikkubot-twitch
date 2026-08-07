@@ -20,17 +20,35 @@ class MalLinkCog:
         if extra_banned_words:
             self.extra_banned_list = [word.strip() for word in extra_banned_words.split(",") if word.strip()]
         print(f"  - Extra banned words initialized: {self.extra_banned_list}")
+        
         # This will hold the regulars dict from the AdminCog, e.g., {'channel': {'user1', ...}}
         self.regulars_by_channel = {}
         # This will hold channel-specific configs and fetched IDs
         self.channel_data = {}
 
-        # Regex patterns are global and don't need to change
-        # Updated to catch Cyrillic homoglyphs and alternative dot characters
+        # 1. Aggressive Link Regex (Catches (dot), [dot], and spacing tricks)
         self.LINK_REGEX = re.compile(
-            r"(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\s*\.\s*)+[a-zA-Z]{2,9}(?![a-zA-Z0-9])(?:\/\S*)?"
+            r"""(?i)
+            # Match either the classic "YO BRO" intro or common viewer-bot pitch keywords
+            (?:
+                YO\s+BRO.*?(?:TOP\s+TWITCH\s+STREAMER|DISCORD\s*【.*?】|PETER\s+SENT\s+U)
+            |
+                (?:ai\s*viewers?|cheap\s*viewers?)
+            |
+                streamboo\s*(?:\.|\s*\.\s*)\s*com
+            )
+            """,
+            re.VERBOSE | re.DOTALL
         )
+        
+        # 2. Whitelisted Twitch Links
         self.TWITCH_LINK_REGEX = re.compile(r'(\bclips\s*\.\s*)?twitch\s*\.\s*tv\b', re.IGNORECASE)
+
+        # 3. Specific Viewbot Phrase Regex
+        self.BOT_PHRASE_REGEX = re.compile(
+            r"(?:buy|get)\s+(?:cheap\s+)?(?:views|viewers|followers|primes|chatters)|(?:streamboo|bigfollows|viewerlabs)",
+            re.IGNORECASE
+        )
         
         # Bot's own info, fetched once during setup
         self.moderator_id = None
@@ -86,7 +104,7 @@ class MalLinkCog:
             await webhook.send(content=mod_mention, embed=embed)
 
     async def on_message(self, msg: ChatMessage):
-        """Checks messages for non-Twitch links and takes action."""
+        """Checks messages for non-Twitch links and bot phrases, and takes action."""
         if msg.user.name.lower() == self.bot_login_name:
             return
 
@@ -106,9 +124,13 @@ class MalLinkCog:
         if is_exempt:
             return
 
-        # 2. Check for a non-Twitch link
-        if self.LINK_REGEX.search(msg.text) and not self.TWITCH_LINK_REGEX.search(msg.text):
-            print(f"[{channel_name}] Non-Twitch link from {msg.user.name}. Deleting message...")
+        # 2. Check for Bot Phrases or Non-Twitch links
+        is_bad_link = self.LINK_REGEX.search(msg.text) and not self.TWITCH_LINK_REGEX.search(msg.text)
+        is_bot_phrase = self.BOT_PHRASE_REGEX.search(msg.text)
+
+        if is_bad_link or is_bot_phrase:
+            reason = "Bot Phrase" if is_bot_phrase else "Illegal Link"
+            print(f"[{channel_name}] {reason} detected from {msg.user.name}. Deleting message...")
             try:
                 # Silently delete the message via the API
                 await self.twitch.delete_chat_message(
