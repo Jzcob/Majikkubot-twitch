@@ -5,6 +5,7 @@ import discord
 import json
 import os
 import traceback
+import time
 from discord.ext import commands, tasks
 from twitchAPI.twitch import Twitch
 
@@ -104,6 +105,8 @@ class StreamingNotifier(commands.Cog):
             url=stream_url,
             color=discord.Color.purple()
         )
+        stream.thumbnail_url = stream.thumbnail_url.replace("{width}", "1280").replace("{height}", "720")
+        embed.set_thumbnail(url=stream.thumbnail_url)
         embed.add_field(name="Category", value=stream.game_name or "Just Chatting", inline=True)
         embed.add_field(name="Viewers", value=str(stream.viewer_count), inline=True)
 
