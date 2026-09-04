@@ -15,7 +15,6 @@ class MalLinkCog:
 
         # Initialize the extra banned words list
         self.extra_banned_list = []
-        # Parse the extra banned words from the environment variable
         extra_banned_words = os.getenv("EXTRA_BANNED_WORDS", "")
         if extra_banned_words:
             self.extra_banned_list = [word.strip() for word in extra_banned_words.split(",") if word.strip()]
@@ -25,6 +24,8 @@ class MalLinkCog:
         self.regulars_by_channel = {}
         # This will hold channel-specific configs and fetched IDs
         self.channel_data = {}
+        # Track users who have already sent a safe message per channel
+        self.seen_users = {}
 
         # 1. Aggressive Link Regex (Catches (dot), [dot], and spacing tricks)
         self.LINK_REGEX = re.compile(
@@ -48,6 +49,18 @@ class MalLinkCog:
         self.BOT_PHRASE_REGEX = re.compile(
             r"(?:buy|get)\s+(?:cheap\s+)?(?:views|viewers|followers|primes|chatters)|(?:streamboo|bigfollows|viewerlabs)",
             re.IGNORECASE
+        )
+
+        # 4. SUPER HARSH First-Message Regex
+        self.HARSH_FIRST_MSG_REGEX = re.compile(
+            r"""(?i)
+            # Match any standard or obfuscated web link (.com, .net, [dot]com, etc.)
+            \b(?:https?://|www\.)\S+
+            |\b\w+\s*(?:\.|\[dot\]|\(dot\))\s*(?:com|net|org|tv|xyz|io|site|online|ru|cc)\b
+            # Match viewbot/engagement pitch keywords
+            |\b(?:viewers?|followers?|primes?|subscribers?|cheap\s*(?:views|followers|subs|viewers)|bot(?:s|ing)?|promote\s+your)\b
+            """,
+            re.VERBOSE
         )
         
         # Bot's own info, fetched once during setup
@@ -113,18 +126,47 @@ class MalLinkCog:
         if not current_config:
             return
 
+        # Initialize tracking set for this channel if it doesn't exist
+        if channel_name not in self.seen_users:
+            self.seen_users[channel_name] = set()
+
+        user_lower = msg.user.name.lower()
+
         # 1. Check if the user is exempt (broadcaster, mod, vip, or regular for THAT channel)
         user_badges = msg.user.badges or {}
         current_regulars = self.regulars_by_channel.get(channel_name, set())
         is_exempt = (
-            msg.user.name.lower() == channel_name or
+            user_lower == channel_name or
             any(badge in user_badges for badge in ['moderator', 'vip', 'admin']) or
-            msg.user.name.lower() in current_regulars
+            user_lower in current_regulars
         )
         if is_exempt:
             return
 
-        # 2. Check for Bot Phrases or Non-Twitch links
+        # 2. Super Harsh Check for First Message Only
+        if user_lower not in self.seen_users[channel_name]:
+            if self.HARSH_FIRST_MSG_REGEX.search(msg.text):
+                print(f"[{channel_name}] Harsh First-Message Filter triggered for {msg.user.name}. Deleting...")
+                try:
+                    await self.twitch.delete_chat_message(
+                        broadcaster_id=current_config['broadcaster_id'],
+                        moderator_id=self.moderator_id,
+                        message_id=msg.id
+                    )
+                    await self.send_discord_webhook(
+                        webhook_url=current_config.get('discord_webhook_mod'),
+                        mod_role_id=current_config.get('discord_mod_role_id'),
+                        user_name=msg.user.name,
+                        original_message=msg.text
+                    )
+                except Exception as e:
+                    print(f"[{channel_name}] Error deleting first message from {msg.user.name}: {e}")
+                return  # Blocked, so do not mark as seen yet
+
+            # Mark user as seen after they successfully pass the first-message check
+            self.seen_users[channel_name].add(user_lower)
+
+        # 3. Standard checks for subsequent messages (or messages that passed first check)
         is_bad_link = self.LINK_REGEX.search(msg.text) and not self.TWITCH_LINK_REGEX.search(msg.text)
         is_bot_phrase = self.BOT_PHRASE_REGEX.search(msg.text)
 
@@ -132,14 +174,12 @@ class MalLinkCog:
             reason = "Bot Phrase" if is_bot_phrase else "Illegal Link"
             print(f"[{channel_name}] {reason} detected from {msg.user.name}. Deleting message...")
             try:
-                # Silently delete the message via the API
                 await self.twitch.delete_chat_message(
                     broadcaster_id=current_config['broadcaster_id'],
                     moderator_id=self.moderator_id,
                     message_id=msg.id
                 )
                 
-                # Send an alert to the correct Discord moderation webhook
                 await self.send_discord_webhook(
                     webhook_url=current_config.get('discord_webhook_mod'),
                     mod_role_id=current_config.get('discord_mod_role_id'),
