@@ -25,6 +25,24 @@ class StreamingNotifier(commands.Cog):
         if app_id and app_secret:
             try:
                 self.twitch = await Twitch(app_id, app_secret)
+                
+                # --- STARTUP SYNC: Check who is currently live to prevent duplicate alerts on restart ---
+                await self.bot.wait_until_ready()
+                if os.path.exists(CONFIG_FILE):
+                    try:
+                        with open(CONFIG_FILE, "r") as f:
+                            config_data = json.load(f)
+                        channels = config_data.get("channels", [])
+                        channel_names = [ch["name"].lower() for ch in channels if "name" in ch]
+                        if channel_names:
+                            streams = [stream async for stream in self.twitch.get_streams(user_login=channel_names)]
+                            for s in streams:
+                                self.live_streamers.add(s.user_login.lower())
+                            print(f"StreamingNotifier synced: {len(self.live_streamers)} streamer(s) currently live.")
+                    except Exception as e:
+                        print(f"Failed to sync active streams on startup: {e}")
+                # --------------------------------------------------------------------------------------
+
                 self.check_streams.start()
                 print("LOADED: `streaming.py` (Twitch Live Monitor active)")
             except Exception as e:
