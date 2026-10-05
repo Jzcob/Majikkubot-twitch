@@ -105,6 +105,14 @@ class CommandsCog:
                 await self.chat.send_message(channel_name, tiktok_message)
             else:
                 return # Don't do anything if the link isn't in config.json
+
+        elif command == '!instagram':
+            instagram_link = current_config.get('instagram_channel_link')
+            if instagram_link:
+                instagram_message = f"Follow on Instagram! {instagram_link}"
+                await self.chat.send_message(channel_name, instagram_message)
+            else:
+                return # Don't do anything if the link isn't in config.json
             
         elif command == "!hockeybot":
             hockeybot_link = "Hello! Jzcob's Discord Hockey bot can can be found here: https://ptb.discord.com/discovery/applications/1156302042969677845"

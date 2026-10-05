@@ -57,20 +57,23 @@ class BlacklistCog:
             raise e
 
     async def send_audit_log(self, webhook_url: str, user_name: str, original_message: str):
-        """Sends a blacklist log to the correct Discord channel via its webhook."""
+        """Optionally sends a Discord audit log without affecting Twitch moderation."""
         if not webhook_url:
-            return  # Silently fail if webhook URL is missing for this channel
-        
-        async with aiohttp.ClientSession() as session:
-            webhook = discord.Webhook.from_url(webhook_url, session=session)
-            embed = discord.Embed(
-                title="Audit Log: Blacklisted Word Detected",
-                description="The user's message was automatically deleted.",
-                color=discord.Color.from_rgb(255, 127, 80) # Coral
-            )
-            embed.add_field(name="Username", value=user_name, inline=False)
-            embed.add_field(name="Original Message", value=f"```{original_message}```", inline=False)
-            await webhook.send(embed=embed)
+            return
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                webhook = discord.Webhook.from_url(webhook_url, session=session)
+                embed = discord.Embed(
+                    title="Audit Log: Blacklisted Word Detected",
+                    description="The user's message was automatically deleted.",
+                    color=discord.Color.from_rgb(255, 127, 80)
+                )
+                embed.add_field(name="Username", value=user_name, inline=False)
+                embed.add_field(name="Original Message", value=f"```{original_message}```", inline=False)
+                await webhook.send(embed=embed)
+        except Exception as e:
+            print(f"Discord blacklist log skipped/failed: {e}")
 
     async def on_message(self, msg: ChatMessage):
         """This function is called for each new message in any channel."""

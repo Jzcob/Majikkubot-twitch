@@ -26,6 +26,7 @@ USER_SCOPES = [
     AuthScope.CHAT_READ,
     AuthScope.CHAT_EDIT,
     AuthScope.MODERATOR_MANAGE_BANNED_USERS,
+    AuthScope.MODERATOR_READ_FOLLOWERS,
 ]
 
 
@@ -44,12 +45,21 @@ async def run_twitch_bot():
     with open(CONFIG_FILE, 'r') as f:
         config = json.load(f)
 
-    channel_configs = config.get('channels', [])
+    raw_channel_configs = config.get('channels', [])
+    # A channel only needs a non-empty `name`. Every other setting is optional.
+    channel_configs = [
+        ch for ch in raw_channel_configs
+        if isinstance(ch, dict) and str(ch.get('name', '')).strip()
+    ]
     if not channel_configs:
-        print("Error: No channels configured in config.json")
+        print("Error: No valid channels configured in config.json (each channel needs at least a name).")
         return
-    
-    target_channels = [ch['name'] for ch in channel_configs]
+
+    skipped = len(raw_channel_configs) - len(channel_configs)
+    if skipped:
+        print(f"Warning: Skipped {skipped} invalid channel config(s) with no channel name.")
+
+    target_channels = [str(ch.get('name')).strip() for ch in channel_configs]
 
     if not all([APP_ID, APP_SECRET]):
         print("Error: CLIENT_ID or CLIENT_SECRET environment variables are not set.")
@@ -215,11 +225,14 @@ async def on_ready():
 
 async def main():
     discord_token = os.getenv("BOT_TOKEN")
+
+    # Discord is optional. A Twitch-only deployment should still work with no BOT_TOKEN.
     if not discord_token:
-        print("Error: BOT_TOKEN environment variable not set.")
+        print("BOT_TOKEN is not set; starting in Twitch-only mode.")
+        await run_twitch_bot()
         return
 
-    # Run both bots concurrently
+    # When Discord is configured, run both bots concurrently.
     await asyncio.gather(
         run_twitch_bot(),
         bot.start(discord_token)

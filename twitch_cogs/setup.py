@@ -1,12 +1,13 @@
+import os
 import aiomysql
 from twitchAPI.chat import Chat, ChatMessage, ChatCommand, ChatEvent
 from twitchAPI.twitch import Twitch
 
 # Database connection settings (Best to put these in your .env file)
-DB_HOST = "your_mysql_host"
-DB_USER = "your_mysql_user"
-DB_PASS = "your_mysql_password"
-DB_NAME = "your_database_name"
+DB_HOST = os.getenv("DB_HOST")
+DB_USER = os.getenv("DB_USER")
+DB_PASS = os.getenv("DB_PASS")
+DB_NAME = os.getenv("DB_NAME")
 
 # Define the prompts in order. 
 # The tuple contains (Database Column Name, User Prompt, Is Optional)
@@ -17,6 +18,7 @@ SETUP_STEPS = [
     ("discord_invite_link", "Please paste your Discord Invite Link (or type 'skip').", True),
     ("youtube_channel_link", "Please paste your YouTube Link (or type 'skip').", True),
     ("tiktok_channel_link", "Please paste your TikTok Link (or type 'skip').", True),
+    ("instagram_channel_link", "Please paste your Instagram Link (or type 'skip').", True)
 ]
 
 class SetupManager:
@@ -119,14 +121,14 @@ class SetupManager:
 
 
 async def setup(twitch: Twitch, chat: Chat, channel_configs: list, **kwargs):
-    """Cog setup function"""
+    """Loads !setup only when its optional MySQL configuration is available."""
+    if not all([DB_HOST, DB_USER, DB_PASS, DB_NAME]):
+        print("  - SetupManager disabled: DB_HOST/DB_USER/DB_PASS/DB_NAME not configured.")
+        return None
+
     manager = SetupManager(chat)
     await manager.init_db_pool()
-    
-    # Register the !setup command
+
     chat.register_command('setup', manager.start_setup)
-    
-    # Register the message listener to intercept responses
     chat.register_event(ChatEvent.MESSAGE, manager.handle_setup_messages)
-    
     return manager

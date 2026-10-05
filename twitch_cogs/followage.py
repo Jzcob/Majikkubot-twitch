@@ -1,85 +1,118 @@
-import os
-from datetime import datetime, timezone
-from dateutil.relativedelta import relativedelta
-from twitchAPI.chat import Chat, ChatMessage, ChatEvent
-from twitchAPI.twitch import Twitch
-from typing import List, Dict
+            try:
+                async for user in self.twitch.get_users(logins=channel_names):
+                    self.broadcaster_ids[user.login.lower()] = user.id
+                print(f"  - FollowageCog cached {len(self.broadcaster_ids)} broadcaster ID(s).")
+            except Exception as e:
+                print(f"FollowageCog broadcaster lookup error: {type(e).__name__}: {e}")
 
-class FollowageCog:
-    def __init__(self, twitch: Twitch, chat: Chat, channel_configs: List[Dict]):
-        self.twitch = twitch
-        self.chat = chat
-        self.channel_configs = channel_configs
-        self.event_name = ChatEvent.MESSAGE
-        self.bot_login_name = None
+    @staticmethod
+    def format_followage(followed_at: datetime) -> str:
+        if followed_at.tzinfo is None:
+            followed_at = followed_at.replace(tzinfo=timezone.utc)
 
-    async def setup(self):
-        """Performs async setup to fetch the bot's own user ID."""
-        try:
-            bot_user_data = [user async for user in self.twitch.get_users()]
-            if bot_user_data:
-                self.bot_login_name = bot_user_data[0].login.lower()
-        except Exception as e:
-            print(f"Error during FollowageCog setup: {e}")
+        diff = relativedelta(datetime.now(timezone.utc), followed_at)
+        parts = []
+
+        if diff.years:
+            parts.append(f"{diff.years} year{'s' if diff.years != 1 else ''}")
+        if diff.months:
+            parts.append(f"{diff.months} month{'s' if diff.months != 1 else ''}")
+        if diff.days:
+            parts.append(f"{diff.days} day{'s' if diff.days != 1 else ''}")
+
+        if not parts:
+            if diff.hours:
+                parts.append(f"{diff.hours} hour{'s' if diff.hours != 1 else ''}")
+            elif diff.minutes:
+                parts.append(f"{diff.minutes} minute{'s' if diff.minutes != 1 else ''}")
+            else:
+                parts.append("less than a minute")
+
+        return ", ".join(parts)
 
     async def on_message(self, msg: ChatMessage):
-        """Handles the !followage command."""
-        if msg.user.name.lower() == self.bot_login_name or not msg.text.startswith('!'):
+        if self.bot_login_name and msg.user.name.lower() == self.bot_login_name:
+            return
+        if not msg.text.startswith("!"):
             return
 
-        parts = msg.text.lower().split()
-        command = parts[0]
+        parts = msg.text.strip().split()
+        if not parts or parts[0].lower() != "!followage":
+            return
 
-        if command == '!followage':
-            channel_name = msg.room.name.lower()
-            user_id = msg.user.id
-            user_name = msg.user.name
+        channel_name = msg.room.name.lower()
+        user_name = msg.user.name
+        user_id = str(msg.user.id)
 
-            try:
-                # 1. Fetch the broadcaster's Twitch ID dynamically
-                broadcasters = [u async for u in self.twitch.get_users(logins=[channel_name])]
+        try:
+            broadcaster_id = self.broadcaster_ids.get(channel_name)
+
+            if not broadcaster_id:
+                broadcasters = [
+                    user async for user in self.twitch.get_users(logins=[channel_name])
+                ]
                 if not broadcasters:
+                    await self.chat.send_message(
+                        channel_name,
+                        f"@{user_name}, I couldn't find this channel on Twitch."
+                    )
                     return
+
                 broadcaster_id = broadcasters[0].id
+                self.broadcaster_ids[channel_name] = broadcaster_id
 
-                # 2. Query the follower endpoint
-                followers = [f async for f in self.twitch.get_channel_followers(broadcaster_id=broadcaster_id, user_id=user_id)]
-                
-                # If the list is empty, they are not following
-                if not followers:
-                    await self.chat.send_message(channel_name, f"@{user_name}, you are not currently following this channel!")
-                    return
+            # Current twitchAPI returns ChannelFollowersResult here.
+            # It must be awaited rather than used with "async for".
+            result = await self.twitch.get_channel_followers(
+                broadcaster_id=str(broadcaster_id),
+                user_id=user_id,
+                first=1
+            )
 
-                # 3. Calculate the time difference safely
-                followed_at = followers[0].followed_at
-                now = datetime.now(timezone.utc)
-                
-                # Ensure followed_at is timezone-aware (Twitch API usually provides UTC awareness, 
-                # but this protects against naive datetimes if any environment quirks exist)
-                if followed_at.tzinfo is None:
-                    followed_at = followed_at.replace(tzinfo=timezone.utc)
+            followers = list(result)
 
-                diff = relativedelta(now, followed_at)
+            if not followers:
+                await self.chat.send_message(
+                    channel_name,
+                    f"@{user_name}, you are not currently following this channel!"
+                )
+                return
 
-                # Format the output cleanly
-                time_parts = []
-                if diff.years > 0: 
-                    time_parts.append(f"{diff.years} year{'s' if diff.years > 1 else ''}")
-                if diff.months > 0: 
-                    time_parts.append(f"{diff.months} month{'s' if diff.months > 1 else ''}")
-                if diff.days > 0: 
-                    time_parts.append(f"{diff.days} day{'s' if diff.days > 1 else ''}")
+            time_string = self.format_followage(followers[0].followed_at)
 
-                if not time_parts:
-                    time_string = "less than a day"
-                else:
-                    time_string = ", ".join(time_parts)
+            await self.chat.send_message(
+                channel_name,
+                f"@{user_name} has been following for {time_string}!"
+            )
 
-                await self.chat.send_message(channel_name, f"@{user_name} has been following for {time_string}!")
+        except Exception as e:
+            # Detailed console output is intentional so Twitch auth/scope
+            # failures can actually be diagnosed.
+            print(
+                f"Followage API error in #{channel_name} for "
+                f"{user_name} ({user_id}): {type(e).__name__}: {e}"
+            )
 
-            except Exception as e:
-                print(f"Followage API error: {e}")
-                await self.chat.send_message(channel_name, f"@{user_name}, I ran into an error checking your follow date.")
+            error_name = type(e).__name__.lower()
+            error_text = str(e).lower()
+
+            if (
+                "scope" in error_name
+                or "scope" in error_text
+                or "unauthorized" in error_name
+                or "unauthorized" in error_text
+                or "401" in error_text
+            ):
+                await self.chat.send_message(
+                    channel_name,
+                    f"@{user_name}, followage isn't authorized for this channel yet."
+                )
+            else:
+                await self.chat.send_message(
+                    channel_name,
+                    f"@{user_name}, I ran into an error checking your follow date."
+                )
+
 
 async def setup(twitch: Twitch, chat: Chat, channel_configs: List[Dict], **kwargs):
     cog = FollowageCog(twitch, chat, channel_configs)
