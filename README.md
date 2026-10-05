@@ -69,7 +69,7 @@ Here is the complete list of commands available in the bot.
 
 ## ⚙️ Technical Configuration (For Channel Owners)
 
-Because the bot handles multiple channels simultaneously, it relies on a local `config.json` file managed by the developer. If a channel owner needs to update their links or webhooks, they simply need to provide the new information to Jake.
+Because the bot handles multiple channels simultaneously, it relies on a local `config.json` file managed by the developer. If a channel owner needs to update their links or webhooks, they simply need to provide the new information to Jacob.
 
 **Configurable Channel Elements Include:**
 * Discord Invite Link
