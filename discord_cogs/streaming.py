@@ -33,12 +33,13 @@ class StreamingNotifier(commands.Cog):
             return
         try:
             self.twitch = await Twitch(app_id, app_secret)
-            await self.bot.wait_until_ready()
-            print("StreamingNotifier: performing startup live check...")
-            # Announce currently-live configured streamers once on startup.
-            await self.run_stream_check(force=False)
+
+            # IMPORTANT: Do not wait for bot readiness inside cog_load().
+            # setup_hook() is still running while extensions load, so awaiting
+            # wait_until_ready() here would deadlock Discord startup.
             if not self.check_streams.is_running():
                 self.check_streams.start()
+
             print("LOADED: `streaming.py` (Twitch Live Monitor active)")
         except Exception as e:
             print(f"Failed to initialize Twitch client in streaming.py: {type(e).__name__}: {e}")
@@ -110,7 +111,32 @@ class StreamingNotifier(commands.Cog):
 
     @check_streams.before_loop
     async def before_check_streams(self):
+        # Wait until Discord is ready, then PRIME the current live state
+        # WITHOUT sending announcements. This prevents an ApolloPanel/container
+        # restart from pinging Discord again during the same Twitch stream.
         await self.bot.wait_until_ready()
+        print("StreamingNotifier: Discord ready; syncing live state without notifications...")
+        try:
+            channels = self.load_channels()
+            names = [c["name"].lower() for c in channels]
+            if names:
+                streams = [
+                    s async for s in self.twitch.get_streams(user_login=names)
+                ]
+                self.live_streamers = {
+                    s.user_login.lower() for s in streams
+                }
+                if self.live_streamers:
+                    print(
+                        "StreamingNotifier startup sync: already live "
+                        "(NO Discord ping): "
+                        + ", ".join(sorted(self.live_streamers))
+                    )
+                else:
+                    print("StreamingNotifier startup sync: nobody currently live.")
+        except Exception:
+            print("StreamingNotifier startup state sync failed:")
+            print(traceback.format_exc())
 
     async def send_live_announcement(self, channel_id, streamer_name, stream, ping_role=None):
         try:
